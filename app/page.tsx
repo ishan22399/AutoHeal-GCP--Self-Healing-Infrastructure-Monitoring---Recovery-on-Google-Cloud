@@ -1,427 +1,371 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
+import useSWR from "swr"
+import { Sidebar } from "../dashboard/components/Sidebar"
+import { MetricCard } from "../dashboard/components/MetricCard"
+import { HealLogTable, type HealingLog } from "../dashboard/components/HealLogTable"
+import { AlertBanner, type AlertData } from "../dashboard/components/AlertBanner"
+import { ServiceStatusCard, type ServiceStatus } from "../dashboard/components/ServiceStatusCard"
+import { GraphPanel } from "../dashboard/components/GraphPanel"
 import { Button } from "@/components/ui/button"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Progress } from "@/components/ui/progress"
-import {
-  Activity,
-  AlertTriangle,
-  CheckCircle,
-  Cpu,
-  Database,
-  Globe,
-  Heart,
-  MemoryStick,
-  RefreshCw,
-  Server,
-  Zap,
-} from "lucide-react"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
+import { fetcher } from "../dashboard/lib/fetcher"
+import { MONITORING_THRESHOLDS, REFRESH_INTERVALS } from "../dashboard/lib/constants"
+import { Cpu, MemoryStick, HardDrive, Network, RefreshCw, TrendingUp, CheckCircle } from "lucide-react"
 
-interface SystemMetric {
-  name: string
-  value: number
-  unit: string
-  status: "healthy" | "warning" | "critical"
-  trend: "up" | "down" | "stable"
-}
+export default function Dashboard() {
+  // Time range and refresh interval for metrics
+  const [timeRange, setTimeRange] = useState<"1h" | "6h" | "24h">("1h")
+  const [refreshInterval, setRefreshInterval] = useState(REFRESH_INTERVALS.NORMAL)
 
-interface HealingAction {
-  id: string
-  timestamp: string
-  alertType: string
-  resource: string
-  action: string
-  status: "success" | "failed" | "in_progress"
-  duration: number
-}
+  // Fetch system metrics (CPU, Memory, etc.)
+  const {
+    data: cpuData,
+    error: cpuError,
+    mutate: mutateCpu,
+  } = useSWR(`/api/metrics?resource=autoheal-test-vm&type=cpu&hours=${timeRange.replace("h", "")}`, fetcher, {
+    refreshInterval,
+  })
 
-interface AlertItem {
-  id: string
-  timestamp: string
-  severity: "low" | "medium" | "high" | "critical"
-  message: string
-  resource: string
-  status: "active" | "resolved" | "acknowledged"
-}
+  const {
+    data: memoryData,
+    error: memoryError,
+    mutate: mutateMemory,
+  } = useSWR(`/api/metrics?resource=autoheal-test-vm&type=memory&hours=${timeRange.replace("h", "")}`, fetcher, {
+    refreshInterval,
+  })
 
-export default function Page() {
-  const [metrics, setMetrics] = useState<SystemMetric[]>([
-    { name: "CPU Usage", value: 45, unit: "%", status: "healthy", trend: "stable" },
-    { name: "Memory Usage", value: 67, unit: "%", status: "warning", trend: "up" },
-    { name: "Disk Usage", value: 23, unit: "%", status: "healthy", trend: "down" },
-    { name: "Network I/O", value: 156, unit: "MB/s", status: "healthy", trend: "stable" },
-  ])
+  // Fetch healing logs (from backend, reflecting main.py actions)
+  const {
+    data: logsData,
+    error: logsError,
+    mutate: mutateLogs,
+  } = useSWR("/api/logs?limit=50&hours=24", fetcher, { refreshInterval })
 
-  const [healingActions, setHealingActions] = useState<HealingAction[]>([
-    {
-      id: "1",
-      timestamp: "2024-01-15T10:30:00Z",
-      alertType: "High CPU Usage",
-      resource: "autoheal-test-vm",
-      action: "VM Restart",
-      status: "success",
-      duration: 45,
-    },
-    {
-      id: "2",
-      timestamp: "2024-01-15T09:15:00Z",
-      alertType: "Service Down",
-      resource: "autoheal-test-service",
-      action: "Container Restart",
-      status: "success",
-      duration: 12,
-    },
-    {
-      id: "3",
-      timestamp: "2024-01-15T08:45:00Z",
-      alertType: "Memory Leak",
-      resource: "web-server-pod",
-      action: "Pod Restart",
-      status: "in_progress",
-      duration: 0,
-    },
-  ])
+  // Fetch alerts (active incidents, from backend)
+  const {
+    data: alertsData,
+    error: alertsError,
+    mutate: mutateAlerts,
+  } = useSWR("/api/alerts?active=true", fetcher, { refreshInterval })
 
-  const [alerts, setAlerts] = useState<AlertItem[]>([
-    {
-      id: "1",
-      timestamp: "2024-01-15T10:35:00Z",
-      severity: "high",
-      message: "CPU usage exceeded 90% for 5 minutes",
-      resource: "autoheal-test-vm",
-      status: "resolved",
-    },
-    {
-      id: "2",
-      timestamp: "2024-01-15T10:20:00Z",
-      severity: "critical",
-      message: "Service health check failed",
-      resource: "autoheal-test-service",
-      status: "resolved",
-    },
-    {
-      id: "3",
-      timestamp: "2024-01-15T08:45:00Z",
-      severity: "medium",
-      message: "Memory usage trending upward",
-      resource: "web-server-pod",
-      status: "active",
-    },
-  ])
+  // Fetch service status (from backend)
+  const {
+    data: servicesData,
+    error: servicesError,
+    mutate: mutateServices,
+  } = useSWR("/api/services", fetcher, { refreshInterval })
 
-  const [isRefreshing, setIsRefreshing] = useState(false)
+  // Fallback to mock data if API not ready
+  const [currentMetrics, setCurrentMetrics] = useState({
+    cpu: 45.2,
+    memory: 67.8,
+    disk: 23.1,
+    network: 156.7,
+  })
 
-  // Simulate real-time updates
+  // Simulate real-time metric updates for demo
   useEffect(() => {
     const interval = setInterval(() => {
-      setMetrics((prev) =>
-        prev.map((metric) => ({
-          ...metric,
-          value: Math.max(0, Math.min(100, metric.value + (Math.random() - 0.5) * 10)),
-          status: metric.value > 80 ? "critical" : metric.value > 60 ? "warning" : "healthy",
-        })),
-      )
+      setCurrentMetrics((prev) => ({
+        cpu: Math.max(0, Math.min(100, prev.cpu + (Math.random() - 0.5) * 10)),
+        memory: Math.max(0, Math.min(100, prev.memory + (Math.random() - 0.5) * 5)),
+        disk: Math.max(0, Math.min(100, prev.disk + (Math.random() - 0.5) * 2)),
+        network: Math.max(0, prev.network + (Math.random() - 0.5) * 50),
+      }))
     }, 5000)
-
     return () => clearInterval(interval)
   }, [])
 
-  const handleRefresh = async () => {
-    setIsRefreshing(true)
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 1000))
-    setIsRefreshing(false)
+  // Use API data if available, else fallback to mock
+  const alerts: AlertData[] = alertsData?.data || [
+    {
+      id: "alert-1",
+      severity: "high",
+      title: "High CPU Usage Detected",
+      message: "CPU usage has exceeded 90% for the past 5 minutes on autoheal-test-vm",
+      resource: "autoheal-test-vm",
+      timestamp: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+      autoHealTriggered: true,
+    },
+  ]
+
+  const services: ServiceStatus[] = servicesData?.data || [
+    {
+      name: "autoheal-test-vm",
+      type: "gce",
+      status: "warning",
+      lastCheck: new Date().toISOString(),
+      uptime: 72,
+      metrics: {
+        cpu: 89.5,
+        memory: 67.8,
+      },
+      region: "us-central1",
+      zone: "us-central1-a",
+    },
+    {
+      name: "autoheal-test-service",
+      type: "cloud_run",
+      status: "healthy",
+      lastCheck: new Date().toISOString(),
+      uptime: 168,
+      metrics: {
+        cpu: 23.1,
+        memory: 45.2,
+        requests: 1250,
+        errors: 0,
+      },
+      region: "us-central1",
+    },
+    {
+      name: "web-server-pod",
+      type: "gke",
+      status: "critical",
+      lastCheck: new Date().toISOString(),
+      uptime: 12,
+      metrics: {
+        cpu: 95.2,
+        memory: 87.3,
+        requests: 890,
+        errors: 15,
+      },
+      region: "us-central1",
+    },
+  ]
+
+  // Healing logs from backend or fallback
+  const healingLogs: HealingLog[] = logsData?.data || []
+
+  // Success rate calculation
+  const successRate =
+    healingLogs.length > 0
+      ? (healingLogs.filter((log) => log.status === "success").length / healingLogs.length) * 100
+      : 0
+
+  // Handlers for refresh and alert actions
+  const handleRefreshAll = () => {
+    mutateCpu()
+    mutateMemory()
+    mutateLogs()
+    mutateAlerts()
+    mutateServices()
   }
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "healthy":
-        return "text-green-600"
-      case "warning":
-        return "text-yellow-600"
-      case "critical":
-        return "text-red-600"
-      case "success":
-        return "text-green-600"
-      case "failed":
-        return "text-red-600"
-      case "in_progress":
-        return "text-blue-600"
-      default:
-        return "text-gray-600"
+  const handleAcknowledgeAlert = (alertId: string) => {
+    // Optionally call backend to acknowledge
+    // await fetch(`/api/alerts/${alertId}/acknowledge`, { method: "POST" })
+    mutateAlerts()
+  }
+
+  const handleDismissAlert = (alertId: string) => {
+    // Optionally call backend to dismiss
+    // await fetch(`/api/alerts/${alertId}/dismiss`, { method: "POST" })
+    mutateAlerts()
+  }
+
+  const handleServiceAction = async (action: string, serviceName: string) => {
+    // Call backend to trigger healing action (should match main.py actions)
+    // await fetch(`/api/services/${serviceName}/action`, { method: "POST", body: JSON.stringify({ action }) })
+    mutateServices()
+    mutateLogs()
+    return true
+  }
+
+  // Handler to restrict time range to allowed values
+  const handleTimeRangeChange = (range: string) => {
+    if (range === "1h" || range === "6h" || range === "24h") {
+      setTimeRange(range)
     }
   }
-
-  const getStatusBadgeVariant = (status: string) => {
-    switch (status) {
-      case "healthy":
-      case "success":
-      case "resolved":
-        return "default"
-      case "warning":
-      case "medium":
-        return "secondary"
-      case "critical":
-      case "failed":
-      case "high":
-        return "destructive"
-      case "in_progress":
-      case "active":
-        return "outline"
-      default:
-        return "secondary"
-    }
-  }
-
-  const totalActions = healingActions.length
-  const successfulActions = healingActions.filter((a) => a.status === "success").length
-  const successRate = totalActions > 0 ? (successfulActions / totalActions) * 100 : 0
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-6">
-      <div className="max-w-7xl mx-auto space-y-6">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <div className="p-2 bg-blue-600 rounded-lg">
-              <Heart className="h-8 w-8 text-white" />
-            </div>
+    <div className="flex h-screen bg-gray-50">
+      <Sidebar alertCount={alerts.length} activeIncidents={services.filter((s) => s.status === "critical").length} />
+
+      <main className="flex-1 overflow-auto">
+        <div className="p-6 space-y-6">
+          {/* Header */}
+          <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-3xl font-bold text-gray-900">AutoHeal-GCP</h1>
-              <p className="text-gray-600">Self-Healing Infrastructure Dashboard</p>
+              <h1 className="text-3xl font-bold text-gray-900">System Dashboard</h1>
+              <p className="text-gray-600">Real-time monitoring and healing status</p>
+            </div>
+            <div className="flex items-center space-x-3">
+              <Badge variant="outline" className="bg-green-50 text-green-700">
+                <CheckCircle className="h-3 w-3 mr-1" />
+                AutoHeal Active
+              </Badge>
+              <Button onClick={handleRefreshAll} variant="outline">
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Refresh
+              </Button>
             </div>
           </div>
-          <Button onClick={handleRefresh} disabled={isRefreshing} className="flex items-center space-x-2">
-            <RefreshCw className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`} />
-            <span>Refresh</span>
-          </Button>
-        </div>
 
-        {/* System Status Overview */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          {metrics.map((metric, index) => (
-            <Card key={index}>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">{metric.name}</CardTitle>
-                {metric.name === "CPU Usage" && <Cpu className="h-4 w-4 text-muted-foreground" />}
-                {metric.name === "Memory Usage" && <MemoryStick className="h-4 w-4 text-muted-foreground" />}
-                {metric.name === "Disk Usage" && <Database className="h-4 w-4 text-muted-foreground" />}
-                {metric.name === "Network I/O" && <Globe className="h-4 w-4 text-muted-foreground" />}
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">
-                  {metric.value.toFixed(1)}
-                  {metric.unit}
-                </div>
-                <div className="flex items-center space-x-2 mt-2">
-                  <Progress value={metric.value} className="flex-1" />
-                  <Badge variant={getStatusBadgeVariant(metric.status)}>{metric.status}</Badge>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+          {/* Alert Banner */}
+          <AlertBanner alerts={alerts} onAcknowledge={handleAcknowledgeAlert} onDismiss={handleDismissAlert} />
 
-        {/* Success Rate Card */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
-              <CheckCircle className="h-5 w-5 text-green-600" />
-              <span>Healing Success Rate</span>
-            </CardTitle>
-            <CardDescription>Overall success rate of automated healing actions</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="text-4xl font-bold text-green-600 mb-2">{successRate.toFixed(1)}%</div>
-            <div className="text-sm text-gray-600">
-              {successfulActions} successful out of {totalActions} total actions
+          {/* System Metrics Overview */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            <MetricCard
+              label="CPU Usage"
+              value={cpuData?.current ?? currentMetrics.cpu}
+              unit="%"
+              icon={Cpu}
+              status={
+                (cpuData?.current ?? currentMetrics.cpu) > MONITORING_THRESHOLDS.CPU.CRITICAL
+                  ? "critical"
+                  : (cpuData?.current ?? currentMetrics.cpu) > MONITORING_THRESHOLDS.CPU.WARNING
+                    ? "warning"
+                    : "healthy"
+              }
+              threshold={{
+                warning: MONITORING_THRESHOLDS.CPU.WARNING,
+                critical: MONITORING_THRESHOLDS.CPU.CRITICAL,
+              }}
+              trend="up"
+            />
+            <MetricCard
+              label="Memory Usage"
+              value={memoryData?.current ?? currentMetrics.memory}
+              unit="%"
+              icon={MemoryStick}
+              status={
+                (memoryData?.current ?? currentMetrics.memory) > MONITORING_THRESHOLDS.MEMORY.CRITICAL
+                  ? "critical"
+                  : (memoryData?.current ?? currentMetrics.memory) > MONITORING_THRESHOLDS.MEMORY.WARNING
+                    ? "warning"
+                    : "healthy"
+              }
+              threshold={{
+                warning: MONITORING_THRESHOLDS.MEMORY.WARNING,
+                critical: MONITORING_THRESHOLDS.MEMORY.CRITICAL,
+              }}
+              trend="stable"
+            />
+            <MetricCard
+              label="Disk Usage"
+              value={currentMetrics.disk}
+              unit="%"
+              icon={HardDrive}
+              status={
+                currentMetrics.disk > MONITORING_THRESHOLDS.DISK.CRITICAL
+                  ? "critical"
+                  : currentMetrics.disk > MONITORING_THRESHOLDS.DISK.WARNING
+                    ? "warning"
+                    : "healthy"
+              }
+              threshold={{
+                warning: MONITORING_THRESHOLDS.DISK.WARNING,
+                critical: MONITORING_THRESHOLDS.DISK.CRITICAL,
+              }}
+              trend="down"
+            />
+            <MetricCard
+              label="Network I/O"
+              value={currentMetrics.network}
+              unit=" MB/s"
+              icon={Network}
+              status="healthy"
+              trend="stable"
+            />
+          </div>
+
+          {/* Success Rate Card */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center space-x-2">
+                <TrendingUp className="h-5 w-5 text-green-600" />
+                <span>Healing Success Rate</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center space-x-6">
+                <div>
+                  <div className="text-4xl font-bold text-green-600">{successRate.toFixed(1)}%</div>
+                  <div className="text-sm text-gray-600">
+                    {healingLogs.filter((l) => l.status === "success").length} successful out of {healingLogs.length} total actions
+                  </div>
+                </div>
+                <div className="flex-1 grid grid-cols-3 gap-4 text-center">
+                  <div>
+                    <div className="text-2xl font-semibold text-green-600">
+                      {healingLogs.filter((l) => l.status === "success").length}
+                    </div>
+                    <div className="text-xs text-gray-500">Successful</div>
+                  </div>
+                  <div>
+                    <div className="text-2xl font-semibold text-red-600">
+                      {healingLogs.filter((l) => l.status === "failed").length}
+                    </div>
+                    <div className="text-xs text-gray-500">Failed</div>
+                  </div>
+                  <div>
+                    <div className="text-2xl font-semibold text-blue-600">
+                      {healingLogs.filter((l) => l.status === "in_progress").length}
+                    </div>
+                    <div className="text-xs text-gray-500">In Progress</div>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Charts */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <GraphPanel
+              title="CPU Usage"
+              data={cpuData?.data || []}
+              type="area"
+              unit="%"
+              threshold={{
+                warning: MONITORING_THRESHOLDS.CPU.WARNING,
+                critical: MONITORING_THRESHOLDS.CPU.CRITICAL,
+              }}
+              timeRange={timeRange}
+              onTimeRangeChange={handleTimeRangeChange}
+              loading={!cpuData && !cpuError}
+              error={cpuError?.message}
+            />
+            <GraphPanel
+              title="Memory Usage"
+              data={memoryData?.data || []}
+              type="line"
+              unit="%"
+              threshold={{
+                warning: MONITORING_THRESHOLDS.MEMORY.WARNING,
+                critical: MONITORING_THRESHOLDS.MEMORY.CRITICAL,
+              }}
+              timeRange={timeRange}
+              onTimeRangeChange={handleTimeRangeChange}
+              loading={!memoryData && !memoryError}
+              error={memoryError?.message}
+            />
+          </div>
+
+          {/* Service Status */}
+          <div>
+            <h2 className="text-xl font-semibold text-gray-900 mb-4">Service Status</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {services.map((service) => (
+                <ServiceStatusCard
+                  key={service.name}
+                  service={service}
+                  onRestart={(name: string) => handleServiceAction("restart", name)}
+                  onScale={(name: string) => handleServiceAction("scale", name)}
+                  onViewDetails={(name: string) => console.log("View details:", name)}
+                />
+              ))}
             </div>
-            <Progress value={successRate} className="mt-4" />
-          </CardContent>
-        </Card>
+          </div>
 
-        {/* Main Content Tabs */}
-        <Tabs defaultValue="actions" className="space-y-4">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="actions">Healing Actions</TabsTrigger>
-            <TabsTrigger value="alerts">Active Alerts</TabsTrigger>
-            <TabsTrigger value="resources">Resources</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="actions" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center space-x-2">
-                  <Zap className="h-5 w-5" />
-                  <span>Recent Healing Actions</span>
-                </CardTitle>
-                <CardDescription>Automated recovery actions performed by the system</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {healingActions.map((action) => (
-                    <div key={action.id} className="flex items-center justify-between p-4 border rounded-lg">
-                      <div className="flex items-center space-x-4">
-                        <div
-                          className={`p-2 rounded-full ${
-                            action.status === "success"
-                              ? "bg-green-100"
-                              : action.status === "failed"
-                                ? "bg-red-100"
-                                : "bg-blue-100"
-                          }`}
-                        >
-                          {action.status === "success" && <CheckCircle className="h-4 w-4 text-green-600" />}
-                          {action.status === "failed" && <AlertTriangle className="h-4 w-4 text-red-600" />}
-                          {action.status === "in_progress" && (
-                            <RefreshCw className="h-4 w-4 text-blue-600 animate-spin" />
-                          )}
-                        </div>
-                        <div>
-                          <div className="font-medium">{action.alertType}</div>
-                          <div className="text-sm text-gray-600">
-                            {action.resource} • {action.action}
-                          </div>
-                          <div className="text-xs text-gray-500">{new Date(action.timestamp).toLocaleString()}</div>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <Badge variant={getStatusBadgeVariant(action.status)}>{action.status.replace("_", " ")}</Badge>
-                        {action.duration > 0 && <div className="text-xs text-gray-500 mt-1">{action.duration}s</div>}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="alerts" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center space-x-2">
-                  <AlertTriangle className="h-5 w-5" />
-                  <span>System Alerts</span>
-                </CardTitle>
-                <CardDescription>Current and recent system alerts</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  {alerts.map((alert) => (
-                    <Alert
-                      key={alert.id}
-                      className={
-                        alert.severity === "critical"
-                          ? "border-red-200 bg-red-50"
-                          : alert.severity === "high"
-                            ? "border-orange-200 bg-orange-50"
-                            : alert.severity === "medium"
-                              ? "border-yellow-200 bg-yellow-50"
-                              : "border-blue-200 bg-blue-50"
-                      }
-                    >
-                      <AlertTriangle className="h-4 w-4" />
-                      <AlertTitle className="flex items-center justify-between">
-                        <span>{alert.message}</span>
-                        <Badge variant={getStatusBadgeVariant(alert.status)}>{alert.status}</Badge>
-                      </AlertTitle>
-                      <AlertDescription>
-                        <div className="flex items-center justify-between mt-2">
-                          <span>Resource: {alert.resource}</span>
-                          <span className="text-xs text-gray-500">{new Date(alert.timestamp).toLocaleString()}</span>
-                        </div>
-                      </AlertDescription>
-                    </Alert>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="resources" className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center space-x-2">
-                    <Server className="h-5 w-5" />
-                    <span>Compute Instances</span>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-2">
-                    <div className="flex justify-between">
-                      <span>autoheal-test-vm</span>
-                      <Badge variant="default">Running</Badge>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>web-server-01</span>
-                      <Badge variant="default">Running</Badge>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>api-server-01</span>
-                      <Badge variant="secondary">Stopped</Badge>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center space-x-2">
-                    <Globe className="h-5 w-5" />
-                    <span>Cloud Run Services</span>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-2">
-                    <div className="flex justify-between">
-                      <span>autoheal-test-service</span>
-                      <Badge variant="default">Healthy</Badge>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>api-gateway</span>
-                      <Badge variant="default">Healthy</Badge>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>worker-service</span>
-                      <Badge variant="destructive">Error</Badge>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center space-x-2">
-                    <Activity className="h-5 w-5" />
-                    <span>Monitoring Status</span>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-2">
-                    <div className="flex justify-between">
-                      <span>Cloud Monitoring</span>
-                      <Badge variant="default">Active</Badge>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Pub/Sub Topic</span>
-                      <Badge variant="default">Active</Badge>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Healing Function</span>
-                      <Badge variant="default">Active</Badge>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
-        </Tabs>
-      </div>
+          {/* Recent Healing Actions */}
+          <HealLogTable logs={healingLogs.slice(0, 10)} loading={!logsData && !logsError} onRefresh={mutateLogs} />
+        </div>
+      </main>
     </div>
   )
 }

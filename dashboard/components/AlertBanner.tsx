@@ -5,7 +5,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { AlertTriangle, X, Bell, Clock } from "lucide-react"
-import { formatRelativeTime } from "@/lib/time"
+import { formatRelativeTime } from "../lib/time"
 import { cn } from "@/lib/utils"
 
 export interface AlertData {
