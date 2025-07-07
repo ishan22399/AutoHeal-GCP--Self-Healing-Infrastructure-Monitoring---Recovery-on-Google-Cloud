@@ -20,8 +20,8 @@ import {
   ReferenceLine,
 } from "recharts"
 import { TrendingUp, TrendingDown, BarChart3, LineChartIcon, Activity } from "lucide-react"
-import { formatTimestamp } from "@/lib/time"
-import { CHART_COLORS, TIME_RANGES } from "@/lib/constants"
+import { formatTimestamp } from "../../dashboard/lib/time"
+import { CHART_COLORS, TIME_RANGES } from "../../dashboard/lib/constants"
 import { cn } from "@/lib/utils"
 
 export interface ChartDataPoint {
@@ -145,7 +145,7 @@ export function GraphPanel({
                 y={threshold.warning}
                 stroke="#f59e0b"
                 strokeDasharray="5 5"
-                label={{ value: `Warning: ${threshold.warning}${unit}`, position: "topRight" }}
+                label={{ value: `Warning: ${threshold.warning}${unit}`, position: "top" }}
               />
             )}
             {threshold?.critical && (
@@ -153,7 +153,7 @@ export function GraphPanel({
                 y={threshold.critical}
                 stroke="#ef4444"
                 strokeDasharray="5 5"
-                label={{ value: `Critical: ${threshold.critical}${unit}`, position: "topRight" }}
+                label={{ value: `Critical: ${threshold.critical}${unit}`, position: "top" }}
               />
             )}
             <Area type="monotone" dataKey="value" stroke={color} fill={color} fillOpacity={0.3} strokeWidth={2} />
@@ -167,8 +167,22 @@ export function GraphPanel({
             <XAxis {...xAxisProps} />
             <YAxis {...yAxisProps} />
             <Tooltip {...tooltipProps} />
-            {threshold?.warning && <ReferenceLine y={threshold.warning} stroke="#f59e0b" strokeDasharray="5 5" />}
-            {threshold?.critical && <ReferenceLine y={threshold.critical} stroke="#ef4444" strokeDasharray="5 5" />}
+            {threshold?.warning && (
+              <ReferenceLine
+                y={threshold.warning}
+                stroke="#f59e0b"
+                strokeDasharray="5 5"
+                label={{ value: `Warning: ${threshold.warning}${unit}`, position: "top" }}
+              />
+            )}
+            {threshold?.critical && (
+              <ReferenceLine
+                y={threshold.critical}
+                stroke="#ef4444"
+                strokeDasharray="5 5"
+                label={{ value: `Critical: ${threshold.critical}${unit}`, position: "top" }}
+              />
+            )}
             <Bar dataKey="value" fill={color} />
           </BarChart>
         )
@@ -185,7 +199,7 @@ export function GraphPanel({
                 y={threshold.warning}
                 stroke="#f59e0b"
                 strokeDasharray="5 5"
-                label={{ value: `Warning: ${threshold.warning}${unit}`, position: "topRight" }}
+                label={{ value: `Warning: ${threshold.warning}${unit}`, position: "top" }}
               />
             )}
             {threshold?.critical && (
@@ -193,12 +207,7 @@ export function GraphPanel({
                 y={threshold.critical}
                 stroke="#ef4444"
                 strokeDasharray="5 5"
-                label={{
-                  value: `Critical: ${threshold.critical}
-                strokeDasharray="5 5"
-                label={{ value: \`Critical: ${threshold.critical}${unit}`,
-                  position: "topRight",
-                }}
+                label={{ value: `Critical: ${threshold.critical}${unit}`, position: "top" }}
               />
             )}
             <Line
@@ -286,7 +295,10 @@ export function GraphPanel({
 
             {/* Time Range Selector */}
             {onTimeRangeChange && (
-              <Select value={timeRange} onValueChange={onTimeRangeChange}>
+              <Select
+                value={timeRange}
+                onValueChange={(range) => onTimeRangeChange(range as keyof typeof TIME_RANGES)}
+              >
                 <SelectTrigger className="w-24">
                   <SelectValue />
                 </SelectTrigger>

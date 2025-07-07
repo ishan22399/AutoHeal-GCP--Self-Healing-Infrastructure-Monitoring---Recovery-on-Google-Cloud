@@ -15,6 +15,7 @@ from google.cloud import run_v2
 from google.cloud import logging as cloud_logging
 from google.cloud import monitoring_v3
 import requests
+import yaml
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -34,37 +35,44 @@ SENDGRID_API_KEY = os.environ.get('SENDGRID_API_KEY')
 SLACK_WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL')
 NOTIFICATION_EMAIL = os.environ.get('NOTIFICATION_EMAIL', 'admin@example.com')
 
+# Load healing policies at startup
+POLICY_PATH = os.path.join(os.path.dirname(__file__), '../../config/healing-policies.yaml')
+with open(POLICY_PATH, 'r') as f:
+    healing_policies = yaml.safe_load(f)
+
 class AutoHealEngine:
-    """Main healing engine that processes alerts and executes recovery actions"""
+    """Main healing engine that processes alerts and executes recovery actions (YAML-driven)"""
     
     def __init__(self):
-        self.recovery_actions = {
-            'high_cpu': self.handle_high_cpu,
-            'service_down': self.handle_service_down,
-            'memory_leak': self.handle_memory_leak,
-            'error_rate_spike': self.handle_error_rate_spike
+        self.policies = healing_policies
+        # Map action names in YAML to methods
+        self.action_map = {
+            'restart_vm_instance': self.restart_vm_instance,
+            'scale_cloud_run_service': self.scale_cloud_run_service,
+            'restart_cloud_run_service': self.restart_cloud_run_service,
+            # Add more mappings as you add new actions
         }
-        
+
     def process_alert(self, alert_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Process incoming alert and determine appropriate action"""
+        """Process incoming alert and determine appropriate action (YAML-driven)"""
         try:
-            alert_type = self.classify_alert(alert_data)
-            resource_info = self.extract_resource_info(alert_data)
-            
-            logger.info(f"Processing alert: {alert_type} for resource: {resource_info}")
-            
-            # Execute healing action
-            if alert_type in self.recovery_actions:
-                result = self.recovery_actions[alert_type](resource_info, alert_data)
+            rule, match_info = self.match_policy_rule(alert_data)
+            if rule:
+                action_name = rule['action']['type']
+                parameters = rule['action'].get('parameters', {})
+                # Merge extracted resource info into parameters
+                resource_info = self.extract_resource_info(alert_data)
+                parameters = {**parameters, **resource_info}
+                logger.info(f"Matched rule: {rule['name']} | Action: {action_name} | Params: {parameters}")
+                result = self.dispatch_action(action_name, parameters)
+                alert_type = rule.get('name', 'unknown')
             else:
+                resource_info = self.extract_resource_info(alert_data)
                 result = self.handle_unknown_alert(resource_info, alert_data)
-            
-            # Log the action
+                alert_type = 'unknown'
+
             self.log_healing_action(alert_type, resource_info, result)
-            
-            # Send notification
             self.send_notification(alert_type, resource_info, result)
-            
             return {
                 'status': 'success',
                 'alert_type': alert_type,
@@ -72,7 +80,6 @@ class AutoHealEngine:
                 'action_taken': result.get('action', 'none'),
                 'timestamp': datetime.utcnow().isoformat()
             }
-            
         except Exception as e:
             logger.error(f"Error processing alert: {str(e)}")
             return {
@@ -80,77 +87,43 @@ class AutoHealEngine:
                 'error': str(e),
                 'timestamp': datetime.utcnow().isoformat()
             }
-    
-    def classify_alert(self, alert_data: Dict[str, Any]) -> str:
-        """Classify the type of alert based on the data"""
+
+    def match_policy_rule(self, alert_data: Dict[str, Any]):
+        """Match incoming alert to a rule in the YAML policy"""
         incident = alert_data.get('incident', {})
+        resource = incident.get('resource', {})
         condition_name = incident.get('condition_display_name', '').lower()
-        
-        if 'cpu' in condition_name:
-            return 'high_cpu'
-        elif 'error' in condition_name or '5xx' in condition_name:
-            return 'error_rate_spike'
-        elif 'memory' in condition_name:
-            return 'memory_leak'
-        elif 'uptime' in condition_name or 'availability' in condition_name:
-            return 'service_down'
-        else:
-            return 'unknown'
-    
+        resource_type = resource.get('type', '').lower()
+        # Iterate rules and match by conditions
+        for rule in self.policies.get('rules', []):
+            cond = rule.get('condition', {})
+            # Example: match by resource type and substring in condition name
+            if cond.get('resource_type', '').lower() == resource_type:
+                if cond.get('condition_substring', '').lower() in condition_name:
+                    return rule, {'resource_type': resource_type, 'condition_name': condition_name}
+        return None, None
+
     def extract_resource_info(self, alert_data: Dict[str, Any]) -> Dict[str, Any]:
         """Extract resource information from alert data"""
         incident = alert_data.get('incident', {})
         resource = incident.get('resource', {})
-        
         return {
             'type': resource.get('type', 'unknown'),
             'labels': resource.get('labels', {}),
             'name': resource.get('labels', {}).get('instance_name') or 
                    resource.get('labels', {}).get('service_name', 'unknown')
         }
-    
-    def handle_high_cpu(self, resource_info: Dict[str, Any], alert_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle high CPU usage alerts"""
-        resource_type = resource_info.get('type')
-        resource_name = resource_info.get('name')
-        
-        if resource_type == 'gce_instance':
-            return self.restart_vm_instance(resource_name)
-        elif resource_type == 'cloud_run_revision':
-            return self.scale_cloud_run_service(resource_name)
-        else:
-            return {'action': 'alert_only', 'reason': f'Unsupported resource type: {resource_type}'}
-    
-    def handle_service_down(self, resource_info: Dict[str, Any], alert_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle service downtime alerts"""
-        resource_type = resource_info.get('type')
-        resource_name = resource_info.get('name')
-        
-        if resource_type == 'gce_instance':
-            return self.restart_vm_instance(resource_name)
-        elif resource_type == 'cloud_run_revision':
-            return self.restart_cloud_run_service(resource_name)
-        else:
-            return {'action': 'alert_only', 'reason': f'Unsupported resource type: {resource_type}'}
-    
-    def handle_memory_leak(self, resource_info: Dict[str, Any], alert_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle memory leak alerts"""
-        # For memory leaks, restart is often the best immediate solution
-        return self.handle_service_down(resource_info, alert_data)
-    
-    def handle_error_rate_spike(self, resource_info: Dict[str, Any], alert_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle error rate spike alerts"""
-        resource_type = resource_info.get('type')
-        resource_name = resource_info.get('name')
-        
-        if resource_type == 'cloud_run_revision':
-            # First try to scale up, then restart if needed
-            scale_result = self.scale_cloud_run_service(resource_name)
-            if scale_result.get('status') != 'success':
-                return self.restart_cloud_run_service(resource_name)
-            return scale_result
-        else:
-            return self.handle_service_down(resource_info, alert_data)
+
+    def dispatch_action(self, action_name: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
+        """Call the appropriate healing action based on YAML action type"""
+        action_func = self.action_map.get(action_name)
+        if not action_func:
+            return {'action': action_name, 'status': 'failed', 'error': f'Unknown action: {action_name}'}
+        # Only pass parameters that the function expects
+        import inspect
+        sig = inspect.signature(action_func)
+        filtered_params = {k: v for k, v in parameters.items() if k in sig.parameters}
+        return action_func(**filtered_params)
     
     def handle_unknown_alert(self, resource_info: Dict[str, Any], alert_data: Dict[str, Any]) -> Dict[str, Any]:
         """Handle unknown alert types"""
@@ -538,6 +511,33 @@ def autoheal_http(request):
     """
     HTTP endpoint for testing and manual triggers
     """
+    try:
+        if request.method == 'GET':
+            return {
+                'status': 'healthy',
+                'service': 'AutoHeal-GCP',
+                'timestamp': datetime.utcnow().isoformat(),
+                'version': '1.0.0'
+            }
+        
+        elif request.method == 'POST':
+            alert_data = request.get_json()
+            if not alert_data:
+                return {'error': 'No JSON data provided'}, 400
+            
+            result = healing_engine.process_alert(alert_data)
+            return result
+        
+        else:
+            return {'error': 'Method not allowed'}, 405
+            
+    except Exception as e:
+        logger.error(f"Error in autoheal_http: {str(e)}")
+        return {
+            'status': 'error',
+            'error': str(e),
+            'timestamp': datetime.utcnow().isoformat()
+        }, 500
     try:
         if request.method == 'GET':
             return {

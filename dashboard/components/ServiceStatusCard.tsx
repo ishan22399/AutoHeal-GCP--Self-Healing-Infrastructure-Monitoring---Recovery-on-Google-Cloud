@@ -16,7 +16,7 @@ import {
   Settings,
   type LucideIcon,
 } from "lucide-react"
-import { formatRelativeTime, formatDuration } from "@/lib/time"
+import { formatRelativeTime, formatDuration } from "../../dashboard/lib/time"
 import { cn } from "@/lib/utils"
 
 export interface ServiceStatus {

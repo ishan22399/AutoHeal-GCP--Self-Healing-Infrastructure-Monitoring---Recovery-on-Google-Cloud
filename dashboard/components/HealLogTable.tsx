@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Search, Download, Filter, RefreshCw, CheckCircle, AlertTriangle, Clock } from "lucide-react"
-import { formatTimestamp, formatRelativeTime, formatDuration } from "@/lib/time"
+import { formatTimestamp, formatRelativeTime, formatDuration } from "../../dashboard/lib/time"
 import { cn } from "@/lib/utils"
 
 export interface HealingLog {

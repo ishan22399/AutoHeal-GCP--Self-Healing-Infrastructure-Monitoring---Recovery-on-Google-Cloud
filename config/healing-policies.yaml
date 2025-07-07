@@ -27,13 +27,13 @@ services:
     zone: "us-central1-a"
     criticality: "high"
     max_downtime_minutes: 5
-    
+
   - name: "autoheal-test-service"
     type: "cloud_run"
     region: "us-central1"
     criticality: "critical"
     max_downtime_minutes: 2
-    
+
   - name: "web-server-pod"
     type: "gke"
     region: "us-central1"
@@ -54,15 +54,17 @@ rules:
       - metric: "memory_utilization"
         operator: "<"
         threshold: 80
+        # For extensibility: add more condition fields as needed, e.g. aggregation: "avg"
     actions:
       - type: "restart"
         priority: 1
         timeout: 300
+        parameters: {}  # Consistency: always present
       - type: "notify"
         channels: ["slack", "email"]
+        parameters: {}  # Consistency: always present
     cooldown: 600
     max_retries: 2
-    
   - id: "cpu-memory-scale"
     name: "High CPU + Memory - Scale Service"
     service_pattern: "cloud_run:*,gke:*"
@@ -83,8 +85,9 @@ rules:
           target_cpu: 70
       - type: "notify"
         channels: ["slack"]
+        parameters: {}
     cooldown: 300
-    
+
   # Error Rate Rules
   - id: "error-rate-spike"
     name: "HTTP Error Rate Spike"
@@ -101,16 +104,21 @@ rules:
     actions:
       - type: "restart"
         priority: 1
+        parameters: {}
       - type: "health_check"
         delay: 30
+        parameters: {}
       - type: "rollback"
         condition: "if_restart_fails"
+        parameters: {}
     escalation:
       after_failures: 2
       actions:
         - type: "page_oncall"
+          parameters: {}
         - type: "create_incident"
-        
+          parameters: {}
+
   # Memory Leak Detection
   - id: "memory-leak-pattern"
     name: "Memory Leak Detection"
@@ -126,10 +134,13 @@ rules:
     actions:
       - type: "restart"
         priority: 1
+        parameters: {}
       - type: "collect_heap_dump"
         condition: "before_restart"
+        parameters: {}
       - type: "analyze_memory_pattern"
-        
+        parameters: {}
+
   # Service Down Rules
   - id: "service-down-failover"
     name: "Service Down - Multi-Region Failover"
@@ -143,13 +154,15 @@ rules:
       - type: "restart"
         priority: 1
         timeout: 120
+        parameters: {}
       - type: "failover_region"
         condition: "if_restart_fails"
         parameters:
           backup_region: "us-east1"
       - type: "update_dns"
         condition: "after_failover"
-        
+        parameters: {}
+
   # Anomaly Detection Rules
   - id: "ml-anomaly-detection"
     name: "ML-Based Anomaly Detection"
@@ -159,16 +172,21 @@ rules:
         operator: ">"
         threshold: 0.8
         model: "isolation_forest"
+        # For extensibility: add more ML model fields as needed
     actions:
       - type: "investigate"
         priority: 2
+        parameters: {}
       - type: "collect_metrics"
         duration: "5m"
+        parameters: {}
       - type: "notify"
         channels: ["slack"]
         message: "Anomaly detected - investigating"
+        parameters: {}
 
 # Decision Trees
+# For extensibility: Add new decision trees for new alert types or healing strategies.
 decision_trees:
   - name: "cpu_spike_decision"
     root:
@@ -185,7 +203,7 @@ decision_trees:
             action: "monitor"
       false:
         action: "no_action"
-        
+
   - name: "service_failure_decision"
     root:
       condition: "service_down"
@@ -217,7 +235,7 @@ validation:
         - metric: "error_rate"
           operator: "<"
           threshold: 1
-          
+
     - name: "performance_validation"
       timeout: 120
       checks:
@@ -241,3 +259,9 @@ cost_model:
     scale: 0.25
     failover: 5.00
     rollback: 1.00
+
+# --- Extensibility Notes ---
+# - To add new action types, define their parameters and document their expected behavior here.
+# - To add new condition operators or metrics, document their meaning and usage.
+# - For testing: Ensure your code can parse all sections (rules, decision_trees, validation, cost_model).
+# - For maintainers: Always keep 'parameters' present in actions, even if empty, for consistency.
