@@ -1,0 +1,243 @@
+# AutoHeal-GCP Policy-Based Healing Engine Configuration
+# This file defines intelligent healing rules and decision trees
+
+version: "3.0"
+metadata:
+  name: "AutoHeal Production Policies"
+  description: "Intelligent healing policies for GCP infrastructure"
+  created: "2024-01-15T00:00:00Z"
+  updated: "2024-01-15T00:00:00Z"
+
+# Global Configuration
+global:
+  max_concurrent_actions: 5
+  cooldown_period: 300  # seconds
+  escalation_threshold: 3  # failures before escalation
+  cost_per_second_downtime: 10.50  # USD
+  notification_channels:
+    - slack
+    - email
+    - telegram
+
+# Service Definitions
+services:
+  - name: "autoheal-test-vm"
+    type: "gce"
+    region: "us-central1"
+    zone: "us-central1-a"
+    criticality: "high"
+    max_downtime_minutes: 5
+    
+  - name: "autoheal-test-service"
+    type: "cloud_run"
+    region: "us-central1"
+    criticality: "critical"
+    max_downtime_minutes: 2
+    
+  - name: "web-server-pod"
+    type: "gke"
+    region: "us-central1"
+    criticality: "medium"
+    max_downtime_minutes: 10
+
+# Healing Rules - Policy-Based Recovery Engine
+rules:
+  # High CPU Rules
+  - id: "cpu-spike-restart"
+    name: "High CPU Spike - Restart Service"
+    service_pattern: "*"
+    conditions:
+      - metric: "cpu_utilization"
+        operator: ">"
+        threshold: 90
+        duration: "5m"
+      - metric: "memory_utilization"
+        operator: "<"
+        threshold: 80
+    actions:
+      - type: "restart"
+        priority: 1
+        timeout: 300
+      - type: "notify"
+        channels: ["slack", "email"]
+    cooldown: 600
+    max_retries: 2
+    
+  - id: "cpu-memory-scale"
+    name: "High CPU + Memory - Scale Service"
+    service_pattern: "cloud_run:*,gke:*"
+    conditions:
+      - metric: "cpu_utilization"
+        operator: ">"
+        threshold: 80
+        duration: "3m"
+      - metric: "memory_utilization"
+        operator: ">"
+        threshold: 75
+        duration: "3m"
+    actions:
+      - type: "scale"
+        parameters:
+          min_instances: 2
+          max_instances: 10
+          target_cpu: 70
+      - type: "notify"
+        channels: ["slack"]
+    cooldown: 300
+    
+  # Error Rate Rules
+  - id: "error-rate-spike"
+    name: "HTTP Error Rate Spike"
+    service_pattern: "cloud_run:*"
+    conditions:
+      - metric: "http_5xx_rate"
+        operator: ">"
+        threshold: 5
+        duration: "2m"
+      - metric: "request_count"
+        operator: ">"
+        threshold: 100
+        duration: "1m"
+    actions:
+      - type: "restart"
+        priority: 1
+      - type: "health_check"
+        delay: 30
+      - type: "rollback"
+        condition: "if_restart_fails"
+    escalation:
+      after_failures: 2
+      actions:
+        - type: "page_oncall"
+        - type: "create_incident"
+        
+  # Memory Leak Detection
+  - id: "memory-leak-pattern"
+    name: "Memory Leak Detection"
+    service_pattern: "*"
+    conditions:
+      - metric: "memory_utilization"
+        operator: "increasing"
+        threshold: 5  # 5% increase per minute
+        duration: "10m"
+      - metric: "memory_utilization"
+        operator: ">"
+        threshold: 85
+    actions:
+      - type: "restart"
+        priority: 1
+      - type: "collect_heap_dump"
+        condition: "before_restart"
+      - type: "analyze_memory_pattern"
+        
+  # Service Down Rules
+  - id: "service-down-failover"
+    name: "Service Down - Multi-Region Failover"
+    service_pattern: "cloud_run:*"
+    conditions:
+      - metric: "uptime_check"
+        operator: "=="
+        threshold: false
+        duration: "1m"
+    actions:
+      - type: "restart"
+        priority: 1
+        timeout: 120
+      - type: "failover_region"
+        condition: "if_restart_fails"
+        parameters:
+          backup_region: "us-east1"
+      - type: "update_dns"
+        condition: "after_failover"
+        
+  # Anomaly Detection Rules
+  - id: "ml-anomaly-detection"
+    name: "ML-Based Anomaly Detection"
+    service_pattern: "*"
+    conditions:
+      - metric: "anomaly_score"
+        operator: ">"
+        threshold: 0.8
+        model: "isolation_forest"
+    actions:
+      - type: "investigate"
+        priority: 2
+      - type: "collect_metrics"
+        duration: "5m"
+      - type: "notify"
+        channels: ["slack"]
+        message: "Anomaly detected - investigating"
+
+# Decision Trees
+decision_trees:
+  - name: "cpu_spike_decision"
+    root:
+      condition: "cpu > 80"
+      true:
+        condition: "memory > 75"
+        true:
+          action: "scale"
+        false:
+          condition: "error_rate > 5"
+          true:
+            action: "restart"
+          false:
+            action: "monitor"
+      false:
+        action: "no_action"
+        
+  - name: "service_failure_decision"
+    root:
+      condition: "service_down"
+      true:
+        condition: "failure_count < 3"
+        true:
+          action: "restart"
+        false:
+          condition: "backup_region_available"
+          true:
+            action: "failover"
+          false:
+            action: "escalate"
+      false:
+        action: "monitor"
+
+# Validation Rules
+validation:
+  post_healing_checks:
+    - name: "service_health"
+      timeout: 60
+      checks:
+        - metric: "cpu_utilization"
+          operator: "<"
+          threshold: 70
+        - metric: "http_response_time"
+          operator: "<"
+          threshold: 500
+        - metric: "error_rate"
+          operator: "<"
+          threshold: 1
+          
+    - name: "performance_validation"
+      timeout: 120
+      checks:
+        - metric: "request_success_rate"
+          operator: ">"
+          threshold: 99
+        - metric: "memory_utilization"
+          operator: "<"
+          threshold: 80
+
+# Cost Estimation
+cost_model:
+  downtime_cost_per_second: 10.50
+  user_impact_multiplier:
+    critical: 3.0
+    high: 2.0
+    medium: 1.5
+    low: 1.0
+  recovery_action_costs:
+    restart: 0.10
+    scale: 0.25
+    failover: 5.00
+    rollback: 1.00

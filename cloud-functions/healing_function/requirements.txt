@@ -1,0 +1,6 @@
+functions-framework
+google-cloud-compute
+google-cloud-run
+google-cloud-logging
+google-cloud-monitoring
+requests
